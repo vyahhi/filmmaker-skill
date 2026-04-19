@@ -26,17 +26,19 @@ No Python required. Uses `curl`, `jq`, and `ffmpeg`.
 ## Install
 
 ```bash
-# Clone into your Claude Code plugins directory
 git clone https://github.com/vyahhi/filmmaker-skill ~/.claude/plugins/filmmaker-skill
 ```
 
-Then in `~/.claude/settings.json`, add the plugin path (or Claude Code will pick it up automatically from `~/.claude/plugins/`).
+Restart Claude Code — the `/filmmaker` command will be available automatically.
 
 ## Usage
 
 ```bash
 # Set your API key
 export NUNCHAKU_API_KEY="sk-nunchaku-..."
+
+# Or put it in a .env file in your project root
+echo 'NUNCHAKU_API_KEY=sk-nunchaku-...' > .env
 
 # Generate a film from a concept
 /filmmaker "a lonely astronaut discovers an alien cat on the moon"
