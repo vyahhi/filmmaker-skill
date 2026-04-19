@@ -1,0 +1,18 @@
+{
+  "name": "filmmaker-marketplace",
+  "description": "Local marketplace for the filmmaker skill",
+  "owner": {
+    "name": "Nikolay Vyahhi"
+  },
+  "plugins": [
+    {
+      "name": "filmmaker",
+      "description": "Turn a one-line concept into a short film using the Nunchaku API",
+      "version": "1.0.0",
+      "source": "./",
+      "author": {
+        "name": "Nikolay Vyahhi"
+      }
+    }
+  ]
+}

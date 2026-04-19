@@ -1,0 +1,17 @@
+{
+  "name": "filmmaker",
+  "description": "Turn a one-line concept into a short film using the Nunchaku API",
+  "version": "1.0.0",
+  "author": {
+    "name": "Nikolay Vyahhi"
+  },
+  "homepage": "https://github.com/vyahhi/filmmaker-skill",
+  "repository": "https://github.com/vyahhi/filmmaker-skill",
+  "license": "MIT",
+  "keywords": [
+    "filmmaker",
+    "video",
+    "nunchaku",
+    "image-generation"
+  ]
+}
