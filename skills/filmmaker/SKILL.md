@@ -74,29 +74,73 @@ mkdir -p "$OUTPUT_DIR/characters" "$OUTPUT_DIR/scenes"
 # write plan.json to $OUTPUT_DIR/plan.json
 ```
 
-## Step 3: Generate Character Portraits
+## API Call Helper
 
-For each character, generate a reference portrait (text→image). This portrait will anchor visual consistency in every scene featuring that character.
-
-Build the prompt as: `<style>. <character_description>. Portrait, facing camera, high detail.`
+Use this function for ALL API calls to handle retries automatically. Define it once at the start:
 
 ```bash
-curl -s https://api.nunchaku.dev/v1/images/generations \
-  -H "Authorization: Bearer $NUNCHAKU_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"model\": \"nunchaku-qwen-image\",
-    \"prompt\": \"<style>. <character_description>. Portrait, facing camera, high detail.\",
-    \"n\": 1,
-    \"size\": \"1280x720\",
-    \"tier\": \"fast\",
-    \"response_format\": \"b64_json\"
-  }" \
-  | jq -r '.data[0].b64_json' \
-  | base64 $BASE64_FLAG - > "$OUTPUT_DIR/characters/<name>.jpg"
+nunchaku_call() {
+  local ENDPOINT="$1"   # e.g. /v1/images/generations
+  local PAYLOAD="$2"    # path to JSON payload file
+  local OUT="$3"        # output file path
+  local RETRIES=10
+  for i in $(seq 1 $RETRIES); do
+    RESP=$(curl -s --max-time 180 "https://api.nunchaku.dev${ENDPOINT}" \
+      -H "Authorization: Bearer $NUNCHAKU_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d @"$PAYLOAD")
+    CODE=$(echo "$RESP" | jq -r '.error.code // empty' 2>/dev/null)
+    if [ "$CODE" = "concurrent_limit_exceeded" ]; then
+      echo "Concurrent limit — waiting 30s (attempt $i/$RETRIES)..."
+      sleep 30; continue
+    fi
+    if [ "$CODE" = "rate_limit_exceeded" ]; then
+      echo "Rate limited — waiting 15s (attempt $i/$RETRIES)..."
+      sleep 15; continue
+    fi
+    # Handle Cloudflare/server timeout (HTTP 524, 502, 503) — non-JSON response
+    if echo "$RESP" | grep -q "error code:"; then
+      echo "Server error ($(echo $RESP | head -c 50)) — waiting 20s (attempt $i/$RETRIES)..."
+      sleep 20; continue
+    fi
+    B64=$(echo "$RESP" | jq -r '.data[0].b64_json // empty' 2>/dev/null)
+    if [ -z "$B64" ] || [ "$B64" = "null" ]; then
+      echo "ERROR: unexpected response: $(echo $RESP | head -c 500)"; exit 1
+    fi
+    echo "$B64" | base64 $BASE64_FLAG - > "$OUT"
+    SIZE=$(wc -c < "$OUT")
+    if [ "$SIZE" -lt 1000 ]; then
+      echo "ERROR: output file too small ($SIZE bytes) — decode likely failed"; exit 1
+    fi
+    return 0
+  done
+  echo "ERROR: all $RETRIES attempts failed"; exit 1
+}
 ```
 
-Wait for each call to complete before starting the next. If a call returns a non-200 status or jq returns null, print the error and stop.
+**IMPORTANT:** Never run API calls in the background. Always run them sequentially — the free plan allows only 1 simultaneous task.
+
+## Step 3: Generate Character Portraits
+
+For each character, generate a reference portrait (text→image). Write prompt to a temp payload file to avoid shell quoting issues:
+
+```bash
+cat > /tmp/portrait_<name>.json <<EOF
+{
+  "model": "nunchaku-qwen-image",
+  "prompt": "<style>. <character_description>. Portrait, facing camera, high detail.",
+  "n": 1,
+  "size": "1280x720",
+  "tier": "fast",
+  "response_format": "b64_json"
+}
+EOF
+
+nunchaku_call /v1/images/generations /tmp/portrait_<name>.json "$OUTPUT_DIR/characters/<name>.jpg"
+echo "<name> portrait done."
+```
+
+Wait for each call to complete before starting the next.
 
 ## Step 4: Generate Scene Images (image→image edit)
 
@@ -120,12 +164,7 @@ cat > /tmp/scene_payload.json <<EOF
 }
 EOF
 
-curl -s https://api.nunchaku.dev/v1/images/edits \
-  -H "Authorization: Bearer $NUNCHAKU_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d @/tmp/scene_payload.json \
-  | jq -r '.data[0].b64_json' \
-  | base64 $BASE64_FLAG - > "$OUTPUT_DIR/scenes/scene_0<N>.jpg"
+nunchaku_call /v1/images/edits /tmp/scene_payload.json "$OUTPUT_DIR/scenes/scene_0<N>.jpg"
 ```
 
 Print progress: `Scene N/5 image done.`
@@ -158,12 +197,7 @@ cat > /tmp/video_payload.json <<EOF
 }
 EOF
 
-curl -s --max-time 120 https://api.nunchaku.dev/v1/video/animations \
-  -H "Authorization: Bearer $NUNCHAKU_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d @/tmp/video_payload.json \
-  | jq -r '.data[0].b64_json' \
-  | base64 $BASE64_FLAG - > "$OUTPUT_DIR/scenes/scene_0<N>.mp4"
+nunchaku_call /v1/video/animations /tmp/video_payload.json "$OUTPUT_DIR/scenes/scene_0<N>.mp4"
 ```
 
 Print progress: `Scene N/5 video done (~30s per clip, please wait).`
@@ -219,8 +253,9 @@ Concept: <concept>
 
 ## Error Handling
 
-- API returns non-2xx → print status + first 500 chars of response body, then stop
-- `jq` returns `null` → the response was malformed; print raw response and stop
-- API 429 → wait 10 seconds, retry up to 3 times
+- `concurrent_limit_exceeded` → wait 15s, retry up to 5 times (handled by `nunchaku_call`)
+- API 429 / `rate_limit_exceeded` → wait 10s, retry up to 5 times (handled by `nunchaku_call`)
 - API 402 → print "Out of credits — check your dashboard at sundai.nunchaku.dev" and stop
-- Any clip file is 0 bytes after decoding → report which scene failed and stop
+- `jq` returns `null` or empty → the response was malformed; print raw response and stop
+- Output file < 1000 bytes after decoding → base64 decode failed; report and stop
+- **Never run API calls in background** — the free plan allows only 1 simultaneous task
